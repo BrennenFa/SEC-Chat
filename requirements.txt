@@ -1,0 +1,12 @@
+requests
+boto3
+python-dotenv
+beautifulsoup4
+aiohttp>=3.9.0
+aioboto3>=12.0.0
+tenacity>=8.2.0
+cdp-backend
+fireo
+gcsfs
+google-cloud-firestore
+tqdm>=4.66.0
