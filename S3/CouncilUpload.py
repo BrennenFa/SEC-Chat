@@ -9,6 +9,8 @@ from gcsfs import GCSFileSystem
 from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
 from tqdm import tqdm
+import time
+from requests.exceptions import RequestException, HTTPError
 
 load_dotenv()
 
@@ -30,20 +32,42 @@ fs = GCSFileSystem(project=CDP_PROJECT_ID, token="anon")
 
 def sync_with_uri_detection(uri, s3_key):
     """detects GCS vs external URIs, error tests both"""
+    # max tries handles ssl errors
+    max_tries = 3
 
-    # GCS file - use existing fs
-    if uri.startswith('gs://'):
-        with fs.open(uri, 'rb') as f:
-            s3_client.upload_fileobj(f, S3_BUCKET, s3_key)
-        
-    # external url
-    elif uri.startswith(('http://', 'https://')):
-        response = requests.get(uri, stream=True, timeout=30)
-        response.raise_for_status()
-        with response.raw as f:
-            s3_client.upload_fileobj(f, S3_BUCKET, s3_key)
-    else:
-        raise ValueError(f"Unknown URI scheme: {uri}")
+    for attempt in range(max_tries):
+        try:
+            # GCS file - use existing fs
+            if uri.startswith('gs://'):
+                with fs.open(uri, 'rb') as f:
+                    s3_client.upload_fileobj(f, S3_BUCKET, s3_key)
+                return
+
+            # external url
+            elif uri.startswith(('http://', 'https://')):
+                response = requests.get(uri, stream=True, timeout=30)
+                response.raise_for_status()
+                with response.raw as f:
+                    s3_client.upload_fileobj(f, S3_BUCKET, s3_key)
+                return
+            else:
+                raise ValueError(f"Unknown URI scheme: {uri}")
+
+        except HTTPError as e:
+            # Don't retry 404s - file doesn't exist
+            if e.response.status_code == 404:
+                raise
+            # Retry other HTTP errors
+            if attempt < max_tries - 1:
+                time.sleep(1)
+                continue
+            raise
+        except (RequestException, OSError, Exception) as e:
+            # Retry SSL errors, timeouts, network issues
+            if attempt < max_tries - 1:
+                time.sleep(1)
+                continue
+            raise
 
 
 
